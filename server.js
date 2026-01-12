@@ -15,75 +15,104 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
-/* ===== CONFIG (DO NOT CHANGE SPEED) ===== */
+/* ===== CONFIG (SPEED SAME / FAST) ===== */
 const HOURLY_LIMIT = 28;
-const PARALLEL = 3;     // SAME
-const DELAY_MS = 120;  // SAME
+const PARALLEL = 3;     // FAST (same as before)
+const DELAY_MS = 120;  // FAST (same as before)
 
 /* IN-MEMORY STATS */
 let stats = {};
 
-/* 🔁 HARD RESET EVERY 1 HOUR */
+/* 🔁 AUTO RESET EVERY 1 HOUR */
 setInterval(() => {
   stats = {};
   console.log("🧹 Hourly reset → stats cleared");
 }, 60 * 60 * 1000);
 
-/* ===== CONTENT SAFETY HELPERS ===== */
-function safeSubject(subject) {
-  return subject.replace(/\s{2,}/g, " ").replace(/([!?])\1+/g, "$1").trim();
+/* ===== CONTENT SAFETY ===== */
+function normalizeSubject(s) {
+  return s
+    .replace(/\s{2,}/g, " ")
+    .replace(/([!?])\1+/g, "$1")
+    .trim();
 }
-function balanceKeywords(text) {
-  let t = text.replace(/\r\n/g, "\n").replace(/\s{3,}/g, "\n\n").trim();
-  const map = [
-    ["report", "the report below"],
-    ["proposal", "the proposal shared"],
-    ["price list", "the current price list"],
-    ["quote", "a prepared quote"],
-    ["screenshot", "a reference screenshot"],
-    ["error", "the noted error"],
-    ["rank", "the current rank"],
-    ["first page", "the first-page visibility"]
+
+function normalizeBody(text) {
+  let t = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\s{3,}/g, "\n\n")
+    .trim();
+
+  // Soften keyword-only lines (report / price)
+  const soften = [
+    ["report", "the report details are shared below"],
+    ["price", "the pricing details are included below"]
   ];
-  map.forEach(([w, p]) => {
-    const r = new RegExp(`(^|\\n)\\s*${w}\\s*(?=\\n|$)`, "gi");
-    t = t.replace(r, `$1${p}`);
+
+  soften.forEach(([w, snt]) => {
+    const re = new RegExp(`(^|\\n)\\s*${w}\\s*(?=\\n|$)`, "gi");
+    t = t.replace(re, `$1${snt}`);
   });
+
   return t;
 }
 
-/* ===== SAFE SEND (SAME SPEED) ===== */
+/* ===== SAFE SEND (FAST, SAME SPEED) ===== */
 async function sendSafely(transporter, mails) {
   let sent = 0;
+
   for (let i = 0; i < mails.length; i += PARALLEL) {
     const batch = mails.slice(i, i + PARALLEL);
-    const results = await Promise.allSettled(batch.map(m => transporter.sendMail(m)));
-    results.forEach(r => { if (r.status === "fulfilled") sent++; });
+
+    const results = await Promise.allSettled(
+      batch.map(m => transporter.sendMail(m))
+    );
+
+    results.forEach(r => {
+      if (r.status === "fulfilled") sent++;
+    });
+
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
+
   return sent;
 }
 
 /* ===== SEND API ===== */
 app.post("/send", async (req, res) => {
   const { senderName, gmail, apppass, to, subject, message } = req.body;
+
   if (!gmail || !apppass || !to || !subject || !message) {
     return res.json({ success: false, msg: "Missing Fields ❌", count: 0 });
   }
 
   if (!stats[gmail]) stats[gmail] = { count: 0 };
   if (stats[gmail].count >= HOURLY_LIMIT) {
-    return res.json({ success: false, msg: "Hourly Limit Reached ❌", count: stats[gmail].count });
+    return res.json({
+      success: false,
+      msg: "Hourly Limit Reached ❌",
+      count: stats[gmail].count
+    });
   }
 
-  const recipients = to.split(/,|\r?\n/).map(r => r.trim()).filter(r => r.includes("@"));
+  const recipients = to
+    .split(/,|\r?\n/)
+    .map(r => r.trim())
+    .filter(r => r.includes("@"));
+
   const remaining = HOURLY_LIMIT - stats[gmail].count;
   if (recipients.length > remaining) {
-    return res.json({ success: false, msg: "Mail Limit Full ❌", count: stats[gmail].count });
+    return res.json({
+      success: false,
+      msg: "Mail Limit Full ❌",
+      count: stats[gmail].count
+    });
   }
 
-  const finalSubject = safeSubject(subject);
-  const finalText = balanceKeywords(message) + "\n\nScanned & Secured — www.avast.com";
+  const finalSubject = normalizeSubject(subject);
+  const finalText =
+    normalizeBody(message) +
+    "\n\nScanned & secured";
 
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
@@ -92,9 +121,14 @@ app.post("/send", async (req, res) => {
     auth: { user: gmail, pass: apppass }
   });
 
-  try { await transporter.verify(); }
-  catch {
-    return res.json({ success: false, msg: "Wrong App Password ❌", count: stats[gmail].count });
+  try {
+    await transporter.verify();
+  } catch {
+    return res.json({
+      success: false,
+      msg: "Wrong App Password ❌",
+      count: stats[gmail].count
+    });
   }
 
   const mails = recipients.map(r => ({
@@ -108,8 +142,14 @@ app.post("/send", async (req, res) => {
   const sentCount = await sendSafely(transporter, mails);
   stats[gmail].count += sentCount;
 
-  return res.json({ success: true, sent: sentCount, count: stats[gmail].count });
+  return res.json({
+    success: true,
+    sent: sentCount,
+    count: stats[gmail].count
+  });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("✅ Safe Mail Server running on port", PORT));
+app.listen(PORT, () => {
+  console.log("✅ Safe Mail Server running on port", PORT);
+});
